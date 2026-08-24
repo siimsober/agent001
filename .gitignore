@@ -1,3 +1,4 @@
 .env
 apikey.txt
-venv313/
+venv3*/
+log/*
