@@ -44,6 +44,63 @@ def load_conversation(log_file=LOG_FILE):
             })
     return messages
 
+# --- pricing table: $ per 1M tokens (input, output) ---
+# Verify current rates at https://claude.com/pricing before relying on this for real budgeting.
+PRICING = {
+    "claude-haiku-4-5-20251001": (1.00, 5.00),
+    "claude-sonnet-5":           (2.00, 10.00),
+    "claude-opus-5":             (5.00, 25.00),
+    "claude-fable-5":            (10.00, 50.00),
+    "claude-mythos-5":           (10.00, 50.00),
+}
+
+def print_usage_summary(log_file=LOG_FILE):
+    """Read the JSONL log and print a per-model token/cost summary table."""
+    totals = {}  # model -> {"input": int, "output": int}
+
+    if not log_file.exists():
+        print("No log file found.")
+        return
+
+    with log_file.open("r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            entry = json.loads(line)
+            if entry.get("direction") != "response":
+                continue
+            msg = entry["message"]
+            usage = msg.get("usage")
+            model = msg.get("model")
+            if not usage or not model:
+                continue
+            stats = totals.setdefault(model, {"input": 0, "output": 0})
+            stats["input"] += usage.get("input_tokens", 0)
+            stats["output"] += usage.get("output_tokens", 0)
+
+    if not totals:
+        print("No usage data found in log.")
+        return
+
+    header = f"{'MODEL':<30} {'INPUT':>10} {'OUTPUT':>10} {'COST ($)':>10}"
+    print(header)
+    print("-" * len(header))
+
+    grand_total = 0.0
+    for model, stats in sorted(totals.items()):
+        in_tok, out_tok = stats["input"], stats["output"]
+        if model in PRICING:
+            in_rate, out_rate = PRICING[model]
+            cost = (in_tok / 1_000_000) * in_rate + (out_tok / 1_000_000) * out_rate
+        else:
+            cost = float("nan")  # unknown model, can't price it
+        grand_total += 0 if cost != cost else cost  # skip NaN
+        print(f"{model:<30} {in_tok:>10} {out_tok:>10} {cost:>10.4f}")
+
+    print("-" * len(header))
+    print(f"{'TOTAL':<30} {'':>10} {'':>10} {grand_total:>10.4f}")
+
 client = anthropic.Anthropic()  # automatically picks up ANTHROPIC_API_KEY
 
 history = load_conversation()
@@ -65,7 +122,7 @@ else:
     }
 
 log_message(message, direction = "request")
-print(message)
+print(message["content"])
 response = client.messages.create(
     model = "claude-haiku-4-5-20251001",
     max_tokens =1000,
@@ -73,8 +130,12 @@ response = client.messages.create(
 )
 
 log_message(response)
-print(response)
+#print(response)
 
 for block in response.content:
     if block.type == "text":
         print(block.text)
+print(f"\nInput tokens:  {response.usage.input_tokens}")
+print(f"Output tokens: {response.usage.output_tokens}")
+
+print_usage_summary()
