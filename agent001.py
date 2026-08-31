@@ -1,4 +1,5 @@
 import json
+import argparse
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from pathlib import Path
@@ -101,41 +102,85 @@ def print_usage_summary(log_file=LOG_FILE):
     print("-" * len(header))
     print(f"{'TOTAL':<30} {'':>10} {'':>10} {grand_total:>10.4f}")
 
-client = anthropic.Anthropic()  # automatically picks up ANTHROPIC_API_KEY
+def send_message(client, history, message, model="claude-haiku-4-5-20251001", max_tokens=2000):
+    """Log the outgoing message, call the API, log and return the response."""
+    log_message(message, direction="request")
+    response = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        messages=history + [message],
+    )
+    log_message(response)
+    return response
 
-history = load_conversation()
+def run_interactive(client, history):
+    print("Interactive mode. Type 'exit' or 'quit' to stop.\n")
+    while True:
+        try:
+            user_input = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nExiting.")
+            break
 
-if not history:
-    message = {
-        "role": "user",
-        "content": (
-            "Goal is to develop a breast cancer polygenic risk score calculation medical device software. "
-            "The software needs to be developed, implemented, and confirm to IVDR regulation and sufficiently developed for notified body review. "
-            "The plan may be gritiqued and improved. This agent will run once per day to make progress towards the goal.\n"
-            "Try to respond in one token. Max is set to 2."
-        ),
-    }
-else:
-    message = {
-        "role": "user",
-        "content": "Continue making progress on the plan from where you left off.",
-    }
+        if not user_input:
+            continue
+        if user_input.lower() in ("exit", "quit"):
+            break
 
-log_message(message, direction = "request")
-print(message["content"])
-response = client.messages.create(
-    model = "claude-haiku-4-5-20251001",
-    max_tokens =1000,
-    messages = history + [message],
-)
+        message = {"role": "user", "content": user_input}
+        response = send_message(client, history, message)
 
-log_message(response)
-#print(response)
+        # keep growing history so later turns in this session have context
+        history.append(message)
+        history.append({"role": "assistant", "content": response.content[0].text})
 
-for block in response.content:
-    if block.type == "text":
-        print(block.text)
-print(f"\nInput tokens:  {response.usage.input_tokens}")
-print(f"Output tokens: {response.usage.output_tokens}")
+        for block in response.content:
+            if block.type == "text":
+                print(block.text)
+        print(f"\n[Input tokens: {response.usage.input_tokens} | Output tokens: {response.usage.output_tokens}]\n")
 
-print_usage_summary()
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-i", "--interactive", action="store_true",
+                         help="Start an interactive prompt loop instead of sending the automatic progress message.")
+    args = parser.parse_args()
+
+    client = anthropic.Anthropic()
+    history = load_conversation()
+
+    if args.interactive:
+        run_interactive(client, history)
+        print_usage_summary()
+        return
+
+    if not history:
+        message = {
+            "role": "user",
+            "content": (
+                "Goal is to develop a breast cancer polygenic risk score calculation medical device software. "
+                "The software needs to be developed, implemented, and confirm to IVDR regulation and sufficiently developed for notified body review. "
+                "The plan may be gritiqued and improved. This agent will run once per day to make progress towards the goal.\n"
+                "Try to respond in one token. Max is set to 2."
+            ),
+        }
+    else:
+        message = {
+            "role": "user",
+            "content": "Continue making progress on the plan from where you left off.",
+        }
+
+    print(message["content"])
+    response = send_message(client, history, message)
+
+    for block in response.content:
+        if block.type == "text":
+            print(block.text)
+    print(f"\nInput tokens:  {response.usage.input_tokens}")
+    print(f"Output tokens: {response.usage.output_tokens}")
+
+    print_usage_summary()
+
+
+if __name__ == "__main__":
+    main()
