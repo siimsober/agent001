@@ -122,6 +122,9 @@ def print_usage_summary(log_file=LOG_FILE):
     print("-" * len(header))
     print(f"{'TOTAL':<30} {'':>10} {'':>10} {grand_total:>10.4f}")
 
+def timestamp_str():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
 # ---------------- tool execution (client-side) ----------------
 
 def resolve_workspace_path(path_str):
@@ -259,7 +262,10 @@ def print_response(response):
     for block in response.content:
         if block.type == "text":
             print(block.text)
-    print(f"\n[Input tokens: {response.usage.input_tokens} | Output tokens: {response.usage.output_tokens}]")
+    print(
+        f"\n[Input tokens: {response.usage.input_tokens} | "
+        f"Output tokens: {response.usage.output_tokens}]"
+    )
 
 
 # ---------------- modes ----------------
@@ -278,7 +284,7 @@ def run_interactive(client, history, model):
         if user_input.lower() in ("exit", "quit"):
             break
 
-        message = {"role": "user", "content": user_input}
+        message = {"role": "user", "content": f"Time is {timestamp_str()}\n{user_input}"}
         history, response = run_agent_turn(client, history, message, model = model)
         print_response(response)
         print()
@@ -287,7 +293,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "-i", "--interactive", action="store_true",
-        help="Start an interactive prompt loop instead of sending the automatic progress message."
+        help="Start an interactive prompt loop instead of sending the automatic progress "
+             "message."
     )
     parser.add_argument(
         "-m", "--model", choices=MODEL_ALIASES.keys(), default=DEFAULT_MODEL,
@@ -308,17 +315,17 @@ def main():
         message = {
             "role": "user",
             "content": (
-                "Goal is to develop a breast cancer polygenic risk score calculation medical device software. "
-                "The software needs to be developed, implemented, and confirm to IVDR regulation and sufficiently developed for notified body review. "
-                "The plan may be gritiqued and improved. This agent will run once per day to make progress towards the goal.\n"
-                "You have a text editor tool and a restricted 'ls' bash command, both scoped to the workspace/ directory, "
-                "for reading and writing project files."
+                f"Time is {timestamp_str()}\n"
+                + (WORKSPACE_DIR / "AGENTS.md").read_text()
             ),
         }
     else:
         message = {
             "role": "user",
-            "content": "Continue making progress on the plan from where you left off.",
+            "content": (
+                f"Time is {timestamp_str()}\n"
+                "Continue making progress on the plan from where you left off."
+            ),
         }
 
     print(f"[model: {model}]")
