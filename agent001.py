@@ -27,6 +27,8 @@ TOOLS = [
     {"type": "bash_20250124", "name": "bash"},
 ]
 
+MAX_TOKENS = 8000
+
 def log_message(message, direction="response"):
     """Append a Claude API message object to a JSONL log file."""
     entry = {
@@ -224,7 +226,8 @@ def execute_tool(name, tool_input):
 # ---------------- agent turn with tool loop ----------------
 
 def run_agent_turn(
-        client, history, user_message, model="claude-haiku-4-5-20251001", max_tokens=2000
+        client, history, user_message, model="claude-haiku-4-5-20251001", 
+        max_tokens = MAX_TOKENS
     ):
     """Sends user_message, executes any tool_use requests, and loops until
     Claude stops asking for tools. Every request/response is logged."""
@@ -258,10 +261,20 @@ def run_agent_turn(
         log_message(tool_result_message, direction="request")
         messages.append(tool_result_message)
 
-def print_response(response):
+def print_response(response, show_thinking = True):
+    has_text = False
     for block in response.content:
-        if block.type == "text":
+        if block.type == "thinking" and show_thinking:
+            if block.thinking:  # can be empty string, e.g. redacted/truncated
+                print(f"[thinking]\n{block.thinking}\n")
+        elif block.type == "text":
             print(block.text)
+            has_text = True
+
+    if not has_text:
+        print(f"[No text output — stop_reason: {response.stop_reason}]")
+        if response.stop_reason == "max_tokens":
+            print("[Hit max_tokens before producing a reply — consider raising max_tokens.]")
     print(
         f"\n[Input tokens: {response.usage.input_tokens} | "
         f"Output tokens: {response.usage.output_tokens}]"
