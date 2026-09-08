@@ -11,6 +11,13 @@ LOG_FILE = Path("log/messages.jsonl")
 WORKSPACE_DIR = Path("workspace")
 WORKSPACE_DIR.mkdir(exist_ok=True)
 
+MODEL_ALIASES = {
+    "haiku": "claude-haiku-4-5-20251001",
+    "sonnet": "claude-sonnet-5",
+    "opus": "claude-opus-5",
+}
+DEFAULT_MODEL = "haiku"
+
 TOOLS = [
     {
         "type": "text_editor_20250728", 
@@ -257,8 +264,8 @@ def print_response(response):
 
 # ---------------- modes ----------------
 
-def run_interactive(client, history):
-    print("Interactive mode. Type 'exit' or 'quit' to stop.\n")
+def run_interactive(client, history, model):
+    print(f"Interactive mode (model: {model}). Type 'exit' or 'quit' to stop.\n")
     while True:
         try:
             user_input = input("> ").strip()
@@ -272,7 +279,7 @@ def run_interactive(client, history):
             break
 
         message = {"role": "user", "content": user_input}
-        history, response = run_agent_turn(client, history, message)
+        history, response = run_agent_turn(client, history, message, model = model)
         print_response(response)
         print()
 
@@ -282,13 +289,18 @@ def main():
         "-i", "--interactive", action="store_true",
         help="Start an interactive prompt loop instead of sending the automatic progress message."
     )
+    parser.add_argument(
+        "-m", "--model", choices=MODEL_ALIASES.keys(), default=DEFAULT_MODEL,
+        help=f"Which model to use (default: {DEFAULT_MODEL})."
+    )
     args = parser.parse_args()
+    model = MODEL_ALIASES[args.model]
 
     client = anthropic.Anthropic()
     history = load_conversation()
 
     if args.interactive:
-        run_interactive(client, history)
+        run_interactive(client, history, model)
         print_usage_summary()
         return
 
@@ -309,8 +321,9 @@ def main():
             "content": "Continue making progress on the plan from where you left off.",
         }
 
+    print(f"[model: {model}]")
     print(message["content"])
-    history, response = run_agent_turn(client, history, message)
+    history, response = run_agent_turn(client, history, message, model = model)
     print_response(response)
     print_usage_summary()
 
