@@ -17,6 +17,7 @@ MODEL_ALIASES = {
     "opus": "claude-opus-5",
 }
 DEFAULT_MODEL = "haiku"
+DEFAULT_PROJECT = "default"
 
 TOOLS = [
     {
@@ -27,10 +28,57 @@ TOOLS = [
     {"type": "bash_20250124", "name": "bash"},
 ]
 
-MAX_TOKENS = 8000
+MAX_TOKENS = 10000
 
-def log_message(message, direction="response"):
+STARTER_AGENTS_MD = """# AGENTS.md
+ 
+This is the starting brief for a new project. Replace this file with the
+actual plan/instructions for the agent before running it non-interactively.
+"""
+ 
+# ---------------- project selection ----------------
+# LOG_FILE and WORKSPACE_DIR are module-level globals that get (re)pointed at
+# a specific project's directories by set_project(). Everything else in this
+# file reads them lazily (as globals, or via a None-default resolved inside
+# the function) so switching projects mid-process is safe.
+ 
+LOG_FILE = None
+WORKSPACE_DIR = None
+ 
+ 
+def set_project(name):
+    """Point LOG_FILE/WORKSPACE_DIR at <project>'s own log + workspace dirs,
+    creating them if this is a new project. Old projects are left exactly as
+    they are on disk, so you can always come back to them with -p <name>."""
+    global LOG_FILE, WORKSPACE_DIR
+    WORKSPACE_DIR = Path("workspace") / name
+    LOG_FILE = Path("log") / name / "messages.jsonl"
+ 
+    WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+ 
+    agents_md = WORKSPACE_DIR / "AGENTS.md"
+    if not agents_md.exists() and not LOG_FILE.exists():
+        # Brand-new project: seed a starter brief so the non-interactive
+        # first run has something to read instead of crashing.
+        agents_md.write_text(STARTER_AGENTS_MD)
+        print(f"[new project '{name}': created {agents_md} — edit it before running non-interactively]")
+ 
+    return LOG_FILE, WORKSPACE_DIR
+ 
+ 
+def list_projects():
+    """List projects that have either a workspace dir or a log dir."""
+    names = set()
+    for base in (Path("workspace"), Path("log")):
+        if base.exists():
+            names.update(p.name for p in base.iterdir() if p.is_dir())
+    return sorted(names)
+ 
+
+def log_message(message, direction="response", log_file=None):
     """Append a Claude API message object to a JSONL log file."""
+    log_file = log_file or LOG_FILE
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "direction": direction,
@@ -40,12 +88,13 @@ def log_message(message, direction="response"):
             else message
         ),
     }
-    with LOG_FILE.open("a") as f:
+    with log_file.open("a") as f:
         f.write(json.dumps(entry) + "\n")
 
-def load_conversation(log_file=LOG_FILE):
+def load_conversation(log_file=None):
     """Read the JSONL log and rebuild a list of {role, content} messages
     suitable for passing straight into messages.create(messages=...)."""
+    log_file = log_file or LOG_FILE
     messages = []
     if not log_file.exists():
         return messages
@@ -77,8 +126,9 @@ PRICING = {
     "claude-mythos-5":           (10.00, 50.00),
 }
 
-def print_usage_summary(log_file=LOG_FILE):
+def print_usage_summary(log_file=None):
     """Read the JSONL log and print a per-model token/cost summary table."""
+    log_file = log_file or LOG_FILE
     totals = {}  # model -> {"input": int, "output": int}
 
     if not log_file.exists():
@@ -313,8 +363,31 @@ def main():
         "-m", "--model", choices=MODEL_ALIASES.keys(), default=DEFAULT_MODEL,
         help=f"Which model to use (default: {DEFAULT_MODEL})."
     )
+    parser.add_argument(
+        "-p", "--project", default=DEFAULT_PROJECT,
+        help=f"Project name. Each project gets its own workspace/<name>/ and "
+             f"log/<name>/messages.jsonl, so different projects never mix "
+             f"histories or files. (default: {DEFAULT_PROJECT})"
+    )
+    parser.add_argument(
+        "--list-projects", action="store_true",
+        help="List known projects (by workspace/log directory) and exit."
+    )
     args = parser.parse_args()
+
+    if args.list_projects:
+        projects = list_projects()
+        if not projects:
+            print("No projects found yet.")
+        else:
+            print("Known projects:")
+            for name in projects:
+                marker = " (default)" if name == DEFAULT_PROJECT else ""
+                print(f"  - {name}{marker}")
+        return
+    
     model = MODEL_ALIASES[args.model]
+    set_project(args.project)
 
     client = anthropic.Anthropic()
     history = load_conversation()
@@ -341,7 +414,7 @@ def main():
             ),
         }
 
-    print(f"[model: {model}]")
+    print(f"[project: {args.project} | model: {model}]")
     print(message["content"])
     history, response = run_agent_turn(client, history, message, model = model)
     print_response(response)
