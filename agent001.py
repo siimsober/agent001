@@ -362,8 +362,8 @@ def run_interactive(client, history, model):
             break
 
         message = {"role": "user", "content": f"Time is {timestamp_str()}\n{user_input}"}
-        history, response = run_agent_turn(client, history, message, model = model)
-        print_response(response)
+        history, response, turn_usage = run_agent_turn(client, history, message, model = model)
+        print_response(response, turn_usage = turn_usage)
         print()
 
 def main():
@@ -430,8 +430,10 @@ def main():
 
     print(f"[project: {args.project} | model: {model}]")
     print(message["content"])
-    history, response = run_agent_turn(client, history, message, model = model)
-    print_response(response)
+    history, response, turn_usage = run_agent_turn(
+        client, history, message, model = model
+    )
+    print_response(response, turn_usage = turn_usage)
     print_usage_summary()
 
 if __name__ == "__main__":
