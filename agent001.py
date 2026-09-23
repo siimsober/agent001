@@ -283,21 +283,25 @@ def run_agent_turn(
     Claude stops asking for tools. Every request/response is logged."""
     log_message(user_message, direction="request")
     messages = history + [user_message]
+    turn_usage = {"input_tokens": 0, "output_tokens": 0}
 
     while True:
         response = client.messages.create(
             model=model, max_tokens=max_tokens, tools=TOOLS, messages=messages,
         )
         log_message(response)
+        turn_usage["input_tokens"] += response.usage.input_tokens
+        turn_usage["output_tokens"] += response.usage.output_tokens
 
         assistant_content = json.loads(response.model_dump_json())["content"]
         messages.append({"role": "assistant", "content": assistant_content})
 
         if response.stop_reason != "tool_use":
-            return messages, response
+            return messages, response, turn_usage
 
         tool_results = []
         for block in response.content:
+            print(f"Block type: {block.type}")
             if block.type == "tool_use":
                 output_text, is_error = execute_tool(block.name, block.input)
                 tool_results.append({
@@ -311,7 +315,9 @@ def run_agent_turn(
         log_message(tool_result_message, direction="request")
         messages.append(tool_result_message)
 
-def print_response(response, show_thinking = True):
+def print_response(response, show_thinking = True, turn_usage = None):
+    """turn_usage, if given, is the {"input_tokens", "output_tokens"} total
+    for the whole turn (all tool-use round-trips)."""
     has_text = False
     for block in response.content:
         if block.type == "thinking" and show_thinking:
@@ -324,10 +330,18 @@ def print_response(response, show_thinking = True):
     if not has_text:
         print(f"[No text output — stop_reason: {response.stop_reason}]")
         if response.stop_reason == "max_tokens":
-            print("[Hit max_tokens before producing a reply — consider raising max_tokens.]")
+            print(
+                "[Hit max_tokens before producing a reply — consider raising max_tokens.]"
+            )
+
+    if turn_usage is not None:
+        print(
+            f"\n[Turn total — Input tokens: {turn_usage['input_tokens']} | "
+            f"Output tokens: {turn_usage['output_tokens']}]"
+        )
     print(
-        f"\n[Input tokens: {response.usage.input_tokens} | "
-        f"Output tokens: {response.usage.output_tokens}]"
+        f"\n[Response input tokens: {response.usage.input_tokens} | "
+        f"Response output tokens: {response.usage.output_tokens}]"
     )
 
 
