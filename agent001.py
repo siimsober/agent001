@@ -15,6 +15,7 @@ MODEL_ALIASES = {
     "haiku": "claude-haiku-4-5-20251001",
     "sonnet": "claude-sonnet-5",
     "opus": "claude-opus-5",
+    "fable": "claude-fable-5-1",
 }
 DEFAULT_MODEL = "haiku"
 DEFAULT_PROJECT = "default"
@@ -123,6 +124,7 @@ PRICING = {
     "claude-sonnet-5":           (2.00, 10.00),
     "claude-opus-5":             (5.00, 25.00),
     "claude-fable-5":            (10.00, 50.00),
+    "claude-fable-5-1":          (10.00, 50.00),
     "claude-mythos-5":           (10.00, 50.00),
 }
 
