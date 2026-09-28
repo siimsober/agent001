@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from pathlib import Path
 import anthropic
+import time
+import random
 
 load_dotenv()  # reads .env and sets the environment variable
 LOG_FILE = Path("log/messages.jsonl")
@@ -275,6 +277,47 @@ def execute_tool(name, tool_input):
         return handle_bash(tool_input)
     return f"Unknown tool: {name}", True
 
+# --- retry functions ---
+
+RETRYABLE_STATUS = {408, 409, 429, 500, 502, 503, 504, 529}
+MAX_RETRIES = 6
+
+def create_with_retry(client, **kwargs):
+    """messages.create with retry on rate limits (429), overloads (529),
+    transient 5xx errors and connection problems. Honors the retry-after
+    header when the server sends one, otherwise uses exponential backoff
+    with jitter. Non-retryable errors (400, 401, 403, 404...) raise
+    immediately."""
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            return client.messages.create(**kwargs)
+
+        except anthropic.APIStatusError as e:
+            if e.status_code not in RETRYABLE_STATUS or attempt == MAX_RETRIES:
+                raise
+            wait = _retry_delay(e.response, attempt)
+            print(f"[{e.status_code} {type(e).__name__} — retry {attempt + 1}/{MAX_RETRIES} "
+                  f"in {wait:.1f}s]")
+            time.sleep(wait)
+
+        except (anthropic.APIConnectionError, anthropic.APITimeoutError) as e:
+            if attempt == MAX_RETRIES:
+                raise
+            wait = _retry_delay(None, attempt)
+            print(f"[{type(e).__name__} — retry {attempt + 1}/{MAX_RETRIES} in {wait:.1f}s]")
+            time.sleep(wait)
+
+def _retry_delay(response, attempt):
+    """Seconds to wait: retry-after header if present, else backoff + jitter."""
+    if response is not None:
+        header = response.headers.get("retry-after")
+        if header:
+            try:
+                return float(header) + random.uniform(0, 1)  # small jitter
+            except ValueError:
+                pass  # HTTP-date format; fall through to backoff
+    return min(60, 2 ** attempt) + random.uniform(0, 1)
+
 # ---------------- agent turn with tool loop ----------------
 
 def run_agent_turn(
@@ -288,8 +331,8 @@ def run_agent_turn(
     turn_usage = {"input_tokens": 0, "output_tokens": 0}
 
     while True:
-        response = client.messages.create(
-            model=model, max_tokens=max_tokens, tools=TOOLS, messages=messages,
+        response = create_with_retry(
+            client, model=model, max_tokens=max_tokens, tools=TOOLS, messages=messages,
         )
         log_message(response)
         turn_usage["input_tokens"] += response.usage.input_tokens
@@ -303,8 +346,13 @@ def run_agent_turn(
 
         tool_results = []
         for block in response.content:
-            print(f"Block type: {block.type}")
-            if block.type == "tool_use":
+            if block.type == "thinking":
+                if block.thinking:  # can be empty (redacted/omitted)
+                    print(f"[thinking]\n{block.thinking}\n")
+            elif block.type == "text":
+                print(block.text)
+            elif block.type == "tool_use":
+                print(f"[tool_use: {block.name}] {json.dumps(block.input)[:100]}")
                 output_text, is_error = execute_tool(block.name, block.input)
                 tool_results.append({
                     "type": "tool_result",
@@ -405,7 +453,7 @@ def main():
     model = MODEL_ALIASES[args.model]
     set_project(args.project)
 
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(max_retries=0)
     history = load_conversation()
 
     if args.interactive:
