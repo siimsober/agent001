@@ -243,7 +243,11 @@ def handle_text_editor(tool_input):
             return f"File not found: {path}", True
         lines = path.read_text().splitlines()
         insert_line = tool_input["insert_line"]
-        lines[insert_line:insert_line] = tool_input["new_str"].splitlines()
+        # current tool uses "insert_text"; fall back to "new_str" for older tool versions
+        new_text = tool_input.get("insert_text", tool_input.get("new_str"))
+        if new_text is None:
+            return "insert requires 'insert_text'.", True
+        lines[insert_line:insert_line] = new_text.splitlines()
         path.write_text("\n".join(lines) + "\n")
         return "Insert applied.", False
 
@@ -271,11 +275,14 @@ def handle_bash(tool_input):
     return output or "(no output)", False
 
 def execute_tool(name, tool_input):
-    if name == "str_replace_based_edit_tool":
-        return handle_text_editor(tool_input)
-    if name == "bash":
-        return handle_bash(tool_input)
-    return f"Unknown tool: {name}", True
+    try:
+        if name == "str_replace_based_edit_tool":
+            return handle_text_editor(tool_input)
+        if name == "bash":
+            return handle_bash(tool_input)
+        return f"Unknown tool: {name}", True
+    except Exception as e:
+        return f"Tool error: {type(e).__name__}: {e}", True
 
 # --- retry functions ---
 
