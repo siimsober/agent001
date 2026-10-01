@@ -178,6 +178,72 @@ def print_usage_summary(log_file=None):
     print("-" * len(header))
     print(f"{'TOTAL':<30} {'':>10} {'':>10} {grand_total:>10.4f}")
 
+def print_model_history(n=20, log_file=None):
+    """Print the last n turns (one per user message, tool-use roundtrips
+    collapsed) with model and token totals, then per-model turn counts."""
+    log_file = log_file or LOG_FILE
+    if not log_file.exists():
+        print("No log file found.")
+        return
+
+    turns = []
+    current = None
+    with log_file.open("r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            entry = json.loads(line)
+            msg = entry["message"]
+            direction = entry.get("direction")
+
+            if direction == "request":
+                content = msg.get("content")
+                is_tool_result = (
+                    isinstance(content, list)
+                    and content
+                    and all(b.get("type") == "tool_result" for b in content)
+                )
+                if is_tool_result:
+                    continue  # continuation of the current turn
+                current = {
+                    "ts": datetime.fromisoformat(entry["timestamp"]),
+                    "model": None, "calls": 0, "in": 0, "out": 0, "stop": "",
+                }
+                turns.append(current)
+
+            elif direction == "response" and current is not None:
+                usage = msg.get("usage") or {}
+                current["model"] = msg.get("model") or current["model"]
+                current["calls"] += 1
+                current["in"] += usage.get("input_tokens", 0)
+                current["out"] += usage.get("output_tokens", 0)
+                current["stop"] = msg.get("stop_reason", "")
+
+    # Drop turns that never got a response (e.g. crashed before the API replied)
+    turns = [t for t in turns if t["calls"] > 0]
+    if not turns:
+        print("No model calls found in log.")
+        return
+
+    header = f"{'TIME (UTC)':<17} {'MODEL':<28} {'CALLS':>5} {'IN':>9} {'OUT':>8}  STOP"
+    print(header)
+    print("-" * len(header))
+    for t in turns[-n:]:
+        print(
+            f"{t['ts'].strftime('%Y-%m-%d %H:%M'):<17} {t['model']:<28} "
+            f"{t['calls']:>5} {t['in']:>9} {t['out']:>8}  {t['stop']}"
+        )
+
+    print("\nTurns per model:")
+    summary = {}
+    for t in turns:
+        s = summary.setdefault(t["model"], {"turns": 0, "last": t["ts"]})
+        s["turns"] += 1
+        s["last"] = max(s["last"], t["ts"])
+    for model, s in sorted(summary.items(), key=lambda kv: kv[1]["last"], reverse=True):
+        print(f"  {model:<28} {s['turns']:>5} turns, last {s['last'].strftime('%Y-%m-%d %H:%M')} UTC")
+
 def timestamp_str():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
@@ -444,6 +510,10 @@ def main():
         "--list-projects", action="store_true",
         help="List known projects (by workspace/log directory) and exit."
     )
+    parser.add_argument(
+        "--history", nargs="?", const=20, type=int, metavar="N",
+        help="Show the last N turns (default 20) for the selected project and exit."
+    )
     args = parser.parse_args()
 
     if args.list_projects:
@@ -460,6 +530,10 @@ def main():
     model = MODEL_ALIASES[args.model]
     set_project(args.project)
 
+    if args.history is not None:
+        print_model_history(args.history)
+        return
+    
     client = anthropic.Anthropic(max_retries=0)
     history = load_conversation()
 
