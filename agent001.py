@@ -88,6 +88,12 @@ def run_agent_turn(
     while True:
         response = create_with_retry(
             client, model=model, max_tokens=max_tokens, tools=TOOLS, messages=messages,
+            betas=["context-management-2025-06-27"],
+            context_management={"edits": [{
+                "type": "clear_tool_uses_20250919",
+                "trigger": {"type": "input_tokens", "value": 60000},
+                "keep": {"type": "tool_uses", "value": 6},
+            }]},
         )
         log_message(response)
         turn_usage["input_tokens"] += response.usage.input_tokens
