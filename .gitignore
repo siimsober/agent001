@@ -3,3 +3,5 @@ apikey.txt
 venv3*/
 log/*
 workspace/*
+__pycache__/
+*.py[cod]
